@@ -292,6 +292,7 @@ void printConsumption() {
     http.addHeader("Content-Type", "application/json");
 
     int httpCode = http.GET();
+	int consumptionAngle;
 
     if (httpCode > 0) {
       String payload = http.getString();
@@ -309,6 +310,13 @@ void printConsumption() {
         float value = atof(state);
         Serial.print("Sensor value as float: ");
         Serial.println(value);
+		if (value <= 2000) {
+			consumptionAngle = mapFloat(value,0,2000,20,180);
+		} else {
+			consumptionAngle = mapFloat(value,2000,6000,180,340);
+		}
+		void drawArc(180, 160, 30, 35, 20, consumptionAngle, TFT_GREEN);
+		
       }
     } else {
       Serial.print("Error on HTTP request: ");
@@ -316,6 +324,21 @@ void printConsumption() {
     }
 
     http.end();
+  }
+}
+
+float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+void drawArc(int x, int y, int r_in, int r_out, int start_angle, int end_angle, uint16_t color) {
+  for (int angle = start_angle; angle <= end_angle; angle++) {
+    float rad = (angle - 90) * DEG_TO_RAD; // Rotate angle system
+    int x_in = x + cos(rad) * r_in;
+    int y_in = y + sin(rad) * r_in;
+    int x_out = x + cos(rad) * r_out;
+    int y_out = y + sin(rad) * r_out;
+    tft.drawLine(x_in, y_in, x_out, y_out, color);
   }
 }
 
@@ -358,6 +381,9 @@ void loop() {
 
     
   }
+  
+  
+
 
   
 
