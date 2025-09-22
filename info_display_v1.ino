@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
@@ -7,6 +8,7 @@
 #include "time.h"
 #include <math.h>
 #include "JASA_scheduler.h"
+#include <Arduino.h>
 
 // ===== TFT Setup =====
 TFT_eSPI tft = TFT_eSPI();
@@ -25,17 +27,20 @@ XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
 #define SCREEN_HEIGHT 240
 #define FONT_SIZE 2
 
+#define TFT_BL 27   // Backlight pin
+#define LEDC_CH 0   // LEDC channel
+#define LEDC_FREQ 5000
+#define LEDC_RES 8  // 8-bit (0-255)
+
 // NTP settings
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 7200;      // adjust for your timezone
 const int   daylightOffset_sec = 3600; // daylight saving offset
 
 
-
 // ===== Wi-Fi & MQTT Settings =====
 const char* ssid = "jasadeko";
 const char* password = "subaru72";
-const char* mqtt_server = "192.168.2.219";
 
 const char* ha_server = "http://192.168.2.68:8123";
 const char* entity_id = "sensor.nordpool_kwh_fi_eur_3_10_0255";
@@ -43,9 +48,14 @@ String token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhMWIwMjdjOTc3NmU
 
 WiFiClient espClient;
 
-JASA_Scheduler el_arc(10000);
+JASA_Scheduler el_arc(15000);
+JASA_Scheduler setBrightnessNormal(0,JASA_Scheduler::TIMER);
 
 int currentHour;
+int lastConsumptionAngle1 = 359;
+int lastConsumptionAngle2 = 359;
+
+String displaymode = "ELECTRICITY";
 
 
 // ===== Button Struct =====
@@ -57,8 +67,8 @@ struct Button {
 
 Button btnOpen = {20, 150, 90, 60, "OPEN", TFT_GREEN};
 Button btnOpen_pressed = {20, 150, 90, 60, "OPEN", TFT_BLUE};
-Button btnClose = {130, 150, 90, 60, "CLOSE", TFT_RED};
-Button btnClose_pressed = {130, 150, 90, 60, "CLOSE", TFT_BLUE};
+Button btnClose = {130, 150, 60, 60, "CLOSE", TFT_RED};
+Button btnClose_pressed = {130, 150, 60, 60, "CLOSE", TFT_BLUE};
 
 void drawButton(Button btn) {
   tft.fillRect(btn.x, btn.y, btn.w, btn.h, btn.color);
@@ -104,13 +114,16 @@ void setup() {
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
-  drawButton(btnOpen);
-  drawButton(btnClose);
+  //drawButton(btnOpen);
+  //drawButton(btnClose);
 
   // Wi-Fi + MQTT
   connectWiFi();
 
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  pinMode(TFT_BL, OUTPUT);
+  analogWrite(TFT_BL, 30); // 50% brightness (0-255)
   
 }
 
@@ -153,13 +166,14 @@ void drawCurrentDay() {
         JsonArray rawToday = doc["attributes"]["raw_today"].as<JsonArray>();
         if (doc["attributes"].containsKey("raw_tomorrow")) {
           JsonArray rawTomorrow = doc["attributes"]["raw_tomorrow"].as<JsonArray>();
-          tomorrow_exists = 1;
         }
+        bool tomorrow_valid = doc["attributes"]["tomorrow_valid"];
+        
         tft.fillRect(1, 1, 320, 119, TFT_BLACK);
         Serial.println("Today's hourly prices:");
 
         int today_start_index = 0;
-        if (tomorrow_exists == 1) {
+        if (tomorrow_valid) {
           today_start_index = currentHour;
         }
         for (JsonObject entry : rawToday) {
@@ -172,7 +186,7 @@ void drawCurrentDay() {
           String hourStr  = startStr.substring(11, 13); // "14:00"
 
           Serial.printf("%s -> %.3f EUR/kWh\n", hourStr.c_str(), value);
-          if ((hourStr.toInt() >= today_start_index) || (tomorrow_exists == 0)) {
+          if ((hourStr.toInt()+1 >= today_start_index) || (!tomorrow_valid)) {
             float scaled = lroundf(value * 500);
             int h = (int)scaled;
             if(value>0.08) {
@@ -201,7 +215,7 @@ void drawCurrentDay() {
           index++;
         }
 
-        if (tomorrow_exists==1) {
+        if (tomorrow_valid) {
           if (!error) {
             JsonArray rawTomorrow = doc["attributes"]["raw_tomorrow"].as<JsonArray>();
             for (JsonObject entry : rawTomorrow) {
@@ -269,30 +283,16 @@ void drawCurrentDay() {
   }
 }
 
-void drawThickArc(int x0, int y0, int r, int thickness, int startAngle, int endAngle, uint16_t color) {
-  for (int radius = r; radius < r + thickness; radius++) {       // loop over radii
-    for (int angle = startAngle; angle <= endAngle; angle++) {   // loop over angles
-      float rad = angle * 3.14159 / 180.0;
-      int x = x0 + radius * cos(rad);
-      int y = y0 + radius * sin(rad);
-      tft.drawPixel(x, y, color);
-    }
-  }
-}
-
-void printConsumption() {
-  
-  if ((WiFi.status() == WL_CONNECTED)) {
-    
+String getEntityStatus(String entity) {
+  if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    String url = String(ha_server) + "/api/states/sensor.sahko_tarkka_w_rounded";
+    String url = String(ha_server) + "/api/states/" + entity;
 
     http.begin(url);
     http.addHeader("Authorization", String("Bearer ") + token);
     http.addHeader("Content-Type", "application/json");
 
     int httpCode = http.GET();
-	int consumptionAngle;
 
     if (httpCode > 0) {
       String payload = http.getString();
@@ -303,27 +303,74 @@ void printConsumption() {
       DeserializationError error = deserializeJson(doc, payload);
 
       if (!error) {
-        const char* state = doc["state"]; // get state
+        const char* state = doc["state"];
         Serial.print("Sensor state: ");
         Serial.println(state);
 
-        float value = atof(state);
-        Serial.print("Sensor value as float: ");
-        Serial.println(value);
-		if (value <= 2000) {
-			consumptionAngle = mapFloat(value,0,2000,20,180);
-		} else {
-			consumptionAngle = mapFloat(value,2000,6000,180,340);
-		}
-		void drawArc(180, 160, 30, 35, 20, consumptionAngle, TFT_GREEN);
-		
+        http.end();   // free connection
+        return String(state);  // ✅ fixed semicolon
+      } else {
+        http.end();
+        return  String("unavailable");
       }
-    } else {
-      Serial.print("Error on HTTP request: ");
-      Serial.println(httpCode);
     }
 
-    http.end();
+    http.end(); // free connection
+  }
+
+  // Default return if error or WiFi not connected
+  return String("unavailable");
+}
+
+void printConsumption() {
+  
+  int consumptionAngle1;
+  int consumptionAngle2;
+
+  String consumption1 = getEntityStatus("sensor.sahko_tarkka_w_rounded");
+  String consumption2 = getEntityStatus("sensor.power_1h");
+  if ((consumption1.length() > 0 && consumption1 != "unavailable") && (consumption1.length() > 0 && consumption1 != "unavailable")) {
+    float value1 = atof(consumption1.c_str());
+    float value2 = atof(consumption2.c_str());
+    
+		if (value1 <= 1000) {
+			consumptionAngle1 = mapFloat(value1,0,1000,20,180);
+		} else if (value1 <= 2000) {
+			consumptionAngle1 = mapFloat(value1,1000,2000,180,270);
+		} else {
+      consumptionAngle1 = mapFloat(value1,2000,6000,270,359);
+    }
+
+    if (value2 <= 1000) {
+			consumptionAngle2 = mapFloat(value2,0,1000,20,180);
+		} else if (value2 <= 2000) {
+			consumptionAngle2 = mapFloat(value2,1000,2000,180,270);
+		} else {
+      consumptionAngle2 = mapFloat(value2,2000,6000,270,359);
+    }
+		
+		drawArc(270, 170, 19, 27, 20, consumptionAngle2, TFT_GREEN);
+    drawArc(270, 170, 19, 27, consumptionAngle2,lastConsumptionAngle2, TFT_BLACK);
+    //drawArc(270, 170, 30, 37, consumptionAngle2,355, TFT_BLACK);
+    
+    drawArc(270, 170, 30, 37, 20, consumptionAngle1, TFT_GREEN);
+    drawArc(270, 170, 30, 37, consumptionAngle1,lastConsumptionAngle1, TFT_BLACK);
+    //drawArc(270, 170, 30, 37, consumptionAngle1,355, TFT_BLACK);
+    drawArc(270, 170, 28, 29, 20,355, TFT_WHITE);
+
+    tft.setTextSize(1);
+    tft.setTextDatum(TL_DATUM); 
+    tft.drawString("0.5", 207, 166);
+    tft.drawString("1.0", 260, 119);
+    tft.drawString("2", 312, 166);
+    tft.drawString("6", 268, 211);
+    tft.drawLine(231, 170, 240, 170, TFT_WHITE);
+    tft.drawLine(270, 127, 270, 140, TFT_WHITE);
+    tft.drawLine(297, 170, 305, 170, TFT_WHITE);
+    tft.drawLine(270, 200, 270, 207, TFT_WHITE);
+		
+    lastConsumptionAngle1 = consumptionAngle1;
+    lastConsumptionAngle2 = consumptionAngle2;
   }
 }
 
@@ -332,17 +379,53 @@ float mapFloat(float x, float in_min, float in_max, float out_min, float out_max
 }
 
 void drawArc(int x, int y, int r_in, int r_out, int start_angle, int end_angle, uint16_t color) {
-  for (int angle = start_angle; angle <= end_angle; angle++) {
-    float rad = (angle - 90) * DEG_TO_RAD; // Rotate angle system
-    int x_in = x + cos(rad) * r_in;
-    int y_in = y + sin(rad) * r_in;
-    int x_out = x + cos(rad) * r_out;
-    int y_out = y + sin(rad) * r_out;
-    tft.drawLine(x_in, y_in, x_out, y_out, color);
+  for (int angle = start_angle; angle < end_angle; angle++) {
+    float rad1 = (angle + 90) * DEG_TO_RAD;
+    float rad2 = (angle + 91) * DEG_TO_RAD;
+
+    int x_in1 = x + cos(rad1) * r_in;
+    int y_in1 = y + sin(rad1) * r_in;
+    int x_out1 = x + cos(rad1) * r_out;
+    int y_out1 = y + sin(rad1) * r_out;
+
+    int x_in2 = x + cos(rad2) * r_in;
+    int y_in2 = y + sin(rad2) * r_in;
+    int x_out2 = x + cos(rad2) * r_out;
+    int y_out2 = y + sin(rad2) * r_out;
+
+    // Fill between two "slices"
+    tft.fillTriangle(x_in1, y_in1, x_out1, y_out1, x_out2, y_out2, color);
+    tft.fillTriangle(x_in1, y_in1, x_in2, y_in2, x_out2, y_out2, color);
   }
 }
 
-void loop() {
+void setBrightnesByClock() {
+
+int brightness;
+
+if (currentHour >= 23 || currentHour < 8) {
+    // Deep night: 23:00 → 08:00
+    brightness = 5;
+}
+else if (currentHour >= 21 && currentHour < 23) {
+    // Evening: 21:00 → 23:00
+    brightness = 50;
+}
+else {
+    // Daytime: 08:00 → 21:00
+    brightness = 230;
+}
+  setBrightness(brightness);
+  Serial.printf("Brightness set by clock: %i\n", brightness);
+}
+
+void setBrightness(int brightness) {
+  pinMode(TFT_BL, OUTPUT);
+  analogWrite(TFT_BL, brightness);
+  Serial.printf("Brightness set: %i\n", brightness);
+}
+
+void displayElectricity() {
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)){
     Serial.println("Failed to obtain time");
@@ -352,15 +435,20 @@ void loop() {
   if (currentHour!=timeinfo.tm_hour) {
     currentHour=timeinfo.tm_hour;
     drawCurrentDay();
+    setBrightnesByClock();
   }
-
   if (touchscreen.tirqTouched() && touchscreen.touched()) {
     TS_Point p = touchscreen.getPoint();
+
+    setBrightness(255);
+    setBrightnessNormal.setTimer(6000);
+
     
     int tx = map(p.x, 200, 3700, 1, SCREEN_WIDTH);
     int ty = map(p.y, 240, 3800, 1, SCREEN_HEIGHT);
     Serial.printf("X: %d  Y:%d\n", tx,ty);
 
+    /* Just to show, how buttons can be placed
     if (isTouchInButton(tx, ty, btnOpen)) {
       drawButton(btnOpen_pressed);
       Serial.println("OPEN pressed - sending MQTT message");
@@ -372,21 +460,17 @@ void loop() {
     }
     else if (isTouchInButton(tx, ty, btnClose)) {
       drawButton(btnClose_pressed);
+
       Serial.println("CLOSE pressed - sending MQTT message");
       
       delay(300); // debounce
       waitUntilNotTouch();
       drawButton(btnClose);
     }
-
+    */
     
   }
   
-  
-
-
-  
-
   char timeStr[9];
   sprintf(timeStr, "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
 
@@ -401,6 +485,18 @@ void loop() {
   tft.drawString(timeStr,2,120);
   tft.setTextPadding(0);
   if (el_arc.doTask()) { printConsumption(); }
+}
+
+void loop() {
+  
+
+  if (displaymode == "ELECTRICITY") {
+    displayElectricity();
+  }
+
+
+  if (setBrightnessNormal.isTimer()) { setBrightnesByClock(); }
+  
   delay(20);  // update every second
 
 }
