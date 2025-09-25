@@ -9,6 +9,8 @@
 #include <math.h>
 #include "JASA_scheduler.h"
 #include <Arduino.h>
+#include <FS.h>
+using FS = fs::FS;   // alias old FS to new fs::FS
 #include <WiFiManager.h>
 
 // ===== TFT Setup =====
@@ -40,14 +42,12 @@ const int   daylightOffset_sec = 3600; // daylight saving offset
 
 
 // ===== Wi-Fi & MQTT Settings =====
-const char* ssid = "jasadeko";
-const char* password = "subaru72";
+//const char* ssid = "jasadeko";
+//const char* password = "subaru72";
 
 const char* ha_server = "http://192.168.2.68:8123";
 const char* entity_id = "sensor.nordpool_kwh_fi_eur_3_10_0255";
 String token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhMWIwMjdjOTc3NmU0YWQxYjliYzU4ZjBhNjg4ZmU3ZiIsImlhdCI6MTc1NzI1Njg0NCwiZXhwIjoyMDcyNjE2ODQ0fQ.u60X3TNzUHQKRS3QSdLu1qoS-xXNTSMqAIdpnKnEb5M";  // from HA profile
-
-WiFiManager wm
 
 WiFiClient espClient;
 
@@ -93,6 +93,7 @@ bool isTouchInButton(int tx, int ty, Button btn) {
   return (tx > btn.x && tx < (btn.x + btn.w) && ty > btn.y && ty < (btn.y + btn.h));
 }
 
+/*
 void connectWiFi() {
   Serial.print("Connecting to WiFi...");
   WiFi.begin(ssid, password);
@@ -102,7 +103,7 @@ void connectWiFi() {
   }
   Serial.println(" connected");
 }
-
+*/
 
 
 void setup() {
@@ -120,8 +121,11 @@ void setup() {
   //drawButton(btnOpen);
   //drawButton(btnClose);
 
+  WiFiManager wifiManager;
+  wifiManager.autoConnect("jasainfo", "123456");
+
   // Wi-Fi + MQTT
-  connectWiFi();
+  //connectWiFi();
 
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
