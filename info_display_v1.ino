@@ -8,10 +8,13 @@
 #include "time.h"
 #include <math.h>
 #include "JASA_scheduler.h"
+#include "JASA_XPT2046_touch_helper.h"
 #include <Arduino.h>
 #include <FS.h>
 using FS = fs::FS;   // alias old FS to new fs::FS
 #include <WiFiManager.h>
+#include <WebServer.h>
+#include "HAConfig.h"
 
 // ===== TFT Setup =====
 TFT_eSPI tft = TFT_eSPI();
@@ -25,6 +28,8 @@ TFT_eSPI tft = TFT_eSPI();
 
 SPIClass touchscreenSPI = SPIClass(VSPI);
 XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
+
+JASA_XPT2046_touch_helper touchHelper(touchscreen);
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -45,11 +50,14 @@ const int   daylightOffset_sec = 3600; // daylight saving offset
 //const char* ssid = "jasadeko";
 //const char* password = "subaru72";
 
-const char* ha_server = "http://192.168.2.68:8123";
-const char* entity_id = "sensor.nordpool_kwh_fi_eur_3_10_0255";
+char* ha_server = "http://192.168.2.68:8123";
+char* entity_id = "sensor.nordpool_kwh_fi_eur_3_10_0255";
 String token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhMWIwMjdjOTc3NmU0YWQxYjliYzU4ZjBhNjg4ZmU3ZiIsImlhdCI6MTc1NzI1Njg0NCwiZXhwIjoyMDcyNjE2ODQ0fQ.u60X3TNzUHQKRS3QSdLu1qoS-xXNTSMqAIdpnKnEb5M";  // from HA profile
 
+
 WiFiClient espClient;
+
+WebServer server(80);
 
 JASA_Scheduler el_arc(15000);
 JASA_Scheduler setBrightnessNormal(0,JASA_Scheduler::TIMER);
@@ -59,6 +67,7 @@ int lastConsumptionAngle1 = 359;
 int lastConsumptionAngle2 = 359;
 
 String displaymode = "ELECTRICITY";
+int displaymode_change = 0;
 
 
 // ===== Button Struct =====
@@ -113,6 +122,8 @@ void setup() {
   touchscreenSPI.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
   touchscreen.begin(touchscreenSPI);
   touchscreen.setRotation(1);
+
+  touchHelper.setLongPressTime(1600); // optional: 1.6 sec long press
 
   // TFT
   tft.init();
@@ -439,10 +450,21 @@ void displayElectricity() {
     delay(1000);
   }
 
-  if (currentHour!=timeinfo.tm_hour) {
+  int event = touchHelper.checkEvent();
+  if (event == 1) {
+    Serial.println("Tap detected");
+  } else if (event == 2) {
+    Serial.println("Long press detected");
+    displaymode = "SETTINGS";
+  } else if (event == 3) {
+    Serial.println("Double Click");
+  }
+
+  if (currentHour!=timeinfo.tm_hour || displaymode_change) {
     currentHour=timeinfo.tm_hour;
     drawCurrentDay();
     setBrightnesByClock();
+    if(displaymode_change) { displaymode_change = 0; }
   }
   if (touchscreen.tirqTouched() && touchscreen.touched()) {
     TS_Point p = touchscreen.getPoint();
@@ -494,11 +516,44 @@ void displayElectricity() {
   if (el_arc.doTask()) { printConsumption(); }
 }
 
-void loop() {
+void displaySettings() {
+  tft.fillScreen(TFT_BLACK);
+  String ipStr = WiFi.localIP().toString();
+
+  tft.drawString("IP address:", 10, 50);
+  tft.drawString(ipStr, 10, 65);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  HAConfig_begin(server,ipStr);
+
   
 
+ 
+  while (true) {
+    HAConfig_handleLoop(server, touchHelper);
+    int event = touchHelper.checkEvent();
+    if (event == 2) {  // long press detected
+      Serial.println("Long press detected! Continuing...");
+      break; // exit loop
+    }
+    delay(10); // small delay to avoid busy loop
+  }
+  
+
+  displaymode = "ELECTRICITY";
+  displaymode_change = 1;
+
+}
+
+void loop() {
+ 
   if (displaymode == "ELECTRICITY") {
     displayElectricity();
+  }
+
+  if (displaymode == "SETTINGS") {
+    displaySettings();
   }
 
 
