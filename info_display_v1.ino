@@ -202,6 +202,7 @@ void drawCurrentDay() {
           // Extract just the hour (substring of ISO8601 timestamp)
           String startStr = String(start);   // e.g. "2025-09-07T14:00:00+03:00"
           String hourStr  = startStr.substring(11, 13); // "14:00"
+          String minStr   = startStr.substring(14, 16); // "14:00"
 
           Serial.printf("%s -> %.3f EUR/kWh\n", hourStr.c_str(), value);
           if ((hourStr.toInt()+1 >= today_start_index) || (!tomorrow_valid)) {
@@ -217,18 +218,21 @@ void drawCurrentDay() {
               color = TFT_ORANGE;
             }
             
-            tft.fillRect(h_index+30, constrain(100-h,0,99), 10, constrain(h,0,100), color);
-            tft.drawLine(h_index+30, 100, h_index+30, 101, color);
-            if (index % 2 == 0) {
+            tft.fillRect(h_index+30, constrain(100-h,0,99), 2, constrain(h,0,100), color);
+            
+            if (minStr == "00") {
               tft.setTextSize(1);
               tft.setTextDatum(TL_DATUM); 
-              tft.drawString(String(index), h_index+30, 106);
+              if(hourStr.toInt() % 2 == 0) {
+                    tft.drawString(hourStr, h_index+30, 106);
+              }
+              tft.drawLine(h_index+30, 100, h_index+30, 101, color);
             }
             Serial.printf("%i -> %i **\n", h_index+30, h);
-            if (index==currentHour) {
+            if (hourStr.toInt()==currentHour && minStr == "00") {
               tft.drawLine(h_index+35, 100, h_index+35, 10, TFT_GREEN);
             }
-            h_index = h_index+10;
+            h_index = h_index+2;
           }
           index++;
         }
@@ -244,6 +248,7 @@ void drawCurrentDay() {
               // Extract just the hour (substring of ISO8601 timestamp)
               String startStr = String(start);   // e.g. "2025-09-07T14:00:00+03:00"
               String hourStr  = startStr.substring(11, 13); // "14:00"
+              String minStr   = startStr.substring(14, 16); // "14:00"
 
               Serial.printf("%s -> %.3f EUR/kWh\n", hourStr.c_str(), value);
               if (hourStr.toInt() < today_start_index+12) {
@@ -259,25 +264,28 @@ void drawCurrentDay() {
                   color = TFT_ORANGE;
                 }
                 
-                tft.fillRect(h_index+30, constrain(100-h,0,99), 10, constrain(h,0,100), color);
-                tft.drawLine(h_index+30, 100, h_index+30, 101, color);
-                if (index % 2 == 0) {
+                tft.fillRect(h_index+30, constrain(100-h,0,99), 2, constrain(h,0,100), color);
+                
+                if (minStr == "00") {
                   tft.setTextSize(1);
                   tft.setTextDatum(TL_DATUM); 
-                  tft.drawString(hourStr, h_index+30, 106);
+                  if(hourStr.toInt() % 2 == 0) {
+                    tft.drawString(hourStr, h_index+30, 106);
+                  }
+                  tft.drawLine(h_index+30, 100, h_index+30, 101, color);
                 }
                 Serial.printf("%i -> %i **\n", h_index+30, h);
-                if (hourStr.toInt() == 0) {
+                if (hourStr.toInt() == 0 && minStr == "00") {
                   tft.fillRect(h_index+30, 1, 2, 100, TFT_BLUE);
                   
                 }
                 
-                h_index = h_index+10;
+                h_index = h_index+2;
               }
               index++;
             }
           }
-          tft.drawString("Tomorrow", ((24-today_start_index)*10)+40, 10);
+          tft.drawString("Tomorrow", ((24-today_start_index)*2)+40, 10);
         }
 
         TFT_dashline(28,75, 315, 2, 6);
