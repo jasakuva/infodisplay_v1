@@ -8,7 +8,13 @@
 #include "time.h"
 #include <math.h>
 #include "JASA_scheduler.h"
+#include "JASA_XPT2046_touch_helper.h"
 #include <Arduino.h>
+#include <FS.h>
+using FS = fs::FS;   // alias old FS to new fs::FS
+#include <WiFiManager.h>
+#include <WebServer.h>
+#include "HAConfig.h"
 
 // ===== TFT Setup =====
 TFT_eSPI tft = TFT_eSPI();
@@ -22,6 +28,8 @@ TFT_eSPI tft = TFT_eSPI();
 
 SPIClass touchscreenSPI = SPIClass(VSPI);
 XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
+
+JASA_XPT2046_touch_helper touchHelper(touchscreen);
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -39,14 +47,27 @@ const int   daylightOffset_sec = 3600; // daylight saving offset
 
 
 // ===== Wi-Fi & MQTT Settings =====
-const char* ssid = "jasadeko";
-const char* password = "subaru72";
+//const char* ssid = "jasadeko";
+//const char* password = "subaru72";
 
-const char* ha_server = "http://192.168.2.68:8123";
-const char* entity_id = "sensor.nordpool_kwh_fi_eur_3_10_0255";
-String token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhMWIwMjdjOTc3NmU0YWQxYjliYzU4ZjBhNjg4ZmU3ZiIsImlhdCI6MTc1NzI1Njg0NCwiZXhwIjoyMDcyNjE2ODQ0fQ.u60X3TNzUHQKRS3QSdLu1qoS-xXNTSMqAIdpnKnEb5M";  // from HA profile
+//char* ha_server = "http://192.168.2.68:8123";
+//char* entity_id = "sensor.nordpool_kwh_fi_eur_3_10_0255";
+//String token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhMWIwMjdjOTc3NmU0YWQxYjliYzU4ZjBhNjg4ZmU3ZiIsImlhdCI6MTc1NzI1Njg0NCwiZXhwIjoyMDcyNjE2ODQ0fQ.u60X3TNzUHQKRS3QSdLu1qoS-xXNTSMqAIdpnKnEb5M";  // from HA profile
+
+char ha_server[30];
+char entity_id[60];
+String token;
+String el_entity_id;
+String el_ma_entity_id;
+String message_entity_id;
+
+
 
 WiFiClient espClient;
+
+WiFiManager wifiManager;
+
+WebServer server(80);
 
 JASA_Scheduler el_arc(15000);
 JASA_Scheduler setBrightnessNormal(0,JASA_Scheduler::TIMER);
@@ -56,6 +77,7 @@ int lastConsumptionAngle1 = 359;
 int lastConsumptionAngle2 = 359;
 
 String displaymode = "ELECTRICITY";
+int displaymode_change = 0;
 
 
 // ===== Button Struct =====
@@ -65,8 +87,10 @@ struct Button {
   uint16_t color;
 };
 
-Button btnOpen = {20, 150, 90, 60, "OPEN", TFT_GREEN};
-Button btnOpen_pressed = {20, 150, 90, 60, "OPEN", TFT_BLUE};
+Button btnResetWiFi = {180, 185, 120, 40, "Reset WiFi", TFT_RED};
+Button btnResetWiFi_pressed = {110, 185, 120, 40, "Reset WiFi", TFT_BLUE};
+Button btnYes = {30, 140, 120, 40, "YES", TFT_GREEN};
+Button btnNo = {180, 140, 120, 40, "NO", TFT_RED};
 Button btnClose = {130, 150, 60, 60, "CLOSE", TFT_RED};
 Button btnClose_pressed = {130, 150, 60, 60, "CLOSE", TFT_BLUE};
 
@@ -75,7 +99,8 @@ void drawButton(Button btn) {
   tft.drawRect(btn.x, btn.y, btn.w, btn.h, TFT_WHITE);
   tft.setTextSize(1);
   tft.setTextColor(TFT_WHITE, btn.color);
-  tft.drawCentreString(btn.text, btn.x + btn.w / 2, btn.y + 20, 2);
+  tft.drawCentreString(btn.text, btn.x + btn.w / 2, (btn.y + btn.h / 2) - 5, 2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
 }
 
 void drawButton_pressed(Button btn) {
@@ -83,13 +108,15 @@ void drawButton_pressed(Button btn) {
   tft.drawRect(btn.x, btn.y, btn.w, btn.h, TFT_WHITE);
   tft.setTextSize(1);
   tft.setTextColor(TFT_WHITE, btn.color);
-  tft.drawCentreString(btn.text, btn.x + btn.w / 2, btn.y + 20, 2);
+  tft.drawCentreString(btn.text, btn.x + btn.w / 2, (btn.y + btn.h / 2) - 5, 2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
 }
 
 bool isTouchInButton(int tx, int ty, Button btn) {
   return (tx > btn.x && tx < (btn.x + btn.w) && ty > btn.y && ty < (btn.y + btn.h));
 }
 
+/*
 void connectWiFi() {
   Serial.print("Connecting to WiFi...");
   WiFi.begin(ssid, password);
@@ -99,16 +126,18 @@ void connectWiFi() {
   }
   Serial.println(" connected");
 }
-
+*/
 
 
 void setup() {
   Serial.begin(115200);
-
+  delay(2000);
   // Touchscreen
   touchscreenSPI.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
   touchscreen.begin(touchscreenSPI);
   touchscreen.setRotation(1);
+
+  touchHelper.setLongPressTime(1600); // optional: 1.6 sec long press
 
   // TFT
   tft.init();
@@ -117,14 +146,50 @@ void setup() {
   //drawButton(btnOpen);
   //drawButton(btnClose);
 
+  Serial.println("Start wifimanager");
+  tft.setTextSize(1);
+  tft.drawString("If this display stays owe 5 sec.,", 10, 10);
+  tft.drawString("configure wifi settings.", 10, 25);
+  tft.drawString("Find access point:", 10, 40);
+  tft.drawString("access point: jasainfo", 10, 55);
+  tft.drawString("password: 12345678", 10, 70);
+  tft.drawString("and usding same phone, go to:", 10, 85);
+  tft.drawString("192.168.4.1", 10, 100);
+  wifiManager.autoConnect("jasainfo", "12345678");
+  Serial.println("END wifimanager");
+
   // Wi-Fi + MQTT
-  connectWiFi();
+  //connectWiFi();
 
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   pinMode(TFT_BL, OUTPUT);
   analogWrite(TFT_BL, 30); // 50% brightness (0-255)
+
+  loadSettings();
+  Serial.printf("g_ha_server: %s\n", g_ha_server);
+  Serial.printf("g_entity_id: %s\n", g_entity_id);
+  Serial.printf("g_token: %s\n", g_token);
+
+  tft.fillScreen(TFT_BLACK);
   
+  //tft.drawString("g_ha_server: "+g_ha_server, 10, 50);
+  //tft.drawString("g_entity_id: "+g_entity_id, 10, 65);
+  //tft.drawString("g_token: "+g_token, 10, 80);
+  tft.setTextSize(2);
+  tft.drawString("WELCOME !", 10, 100);
+
+  g_ha_server.toCharArray(ha_server, sizeof(ha_server));
+  g_entity_id.toCharArray(entity_id, sizeof(entity_id));
+  token = g_token;
+  el_entity_id      = g_el_entity_id;
+  el_ma_entity_id   = g_el_ma_entity_id;
+  message_entity_id = g_message_entity_id;
+
+  delay(5000);
+
+  tft.fillScreen(TFT_BLACK);
+
 }
 
 void waitUntilNotTouch() {
@@ -154,6 +219,7 @@ void drawCurrentDay() {
     int h_index = 0;
     int index = 0;
     int tomorrow_exists = 0;
+    int graphOffset = 18;
     
     if (httpCode == 200) {
       String payload = http.getString();
@@ -184,6 +250,7 @@ void drawCurrentDay() {
           // Extract just the hour (substring of ISO8601 timestamp)
           String startStr = String(start);   // e.g. "2025-09-07T14:00:00+03:00"
           String hourStr  = startStr.substring(11, 13); // "14:00"
+          String minStr   = startStr.substring(14, 16); // "14:00"
 
           Serial.printf("%s -> %.3f EUR/kWh\n", hourStr.c_str(), value);
           if ((hourStr.toInt()+1 >= today_start_index) || (!tomorrow_valid)) {
@@ -199,18 +266,21 @@ void drawCurrentDay() {
               color = TFT_ORANGE;
             }
             
-            tft.fillRect(h_index+30, constrain(100-h,0,99), 10, constrain(h,0,100), color);
-            tft.drawLine(h_index+30, 100, h_index+30, 101, color);
-            if (index % 2 == 0) {
+            tft.fillRect(h_index+graphOffset, constrain(100-h,0,99), 2, constrain(h,0,100), color);
+            
+            if (minStr == "00") {
               tft.setTextSize(1);
               tft.setTextDatum(TL_DATUM); 
-              tft.drawString(String(index), h_index+30, 106);
+              if(hourStr.toInt() % 2 == 0) {
+                    tft.drawString(hourStr, h_index+graphOffset+1, 106);
+              }
+              tft.drawLine(h_index+graphOffset, 100, h_index+graphOffset, 102, color);
             }
-            Serial.printf("%i -> %i **\n", h_index+30, h);
-            if (index==currentHour) {
-              tft.drawLine(h_index+35, 100, h_index+35, 10, TFT_GREEN);
+            Serial.printf("%i -> %i **\n", h_index+graphOffset, h);
+            if (hourStr.toInt()==currentHour && minStr == "00") {
+              tft.drawLine(h_index+graphOffset+5, 100, h_index+graphOffset+5, 10, TFT_GREEN);
             }
-            h_index = h_index+10;
+            h_index = h_index+3;
           }
           index++;
         }
@@ -226,6 +296,7 @@ void drawCurrentDay() {
               // Extract just the hour (substring of ISO8601 timestamp)
               String startStr = String(start);   // e.g. "2025-09-07T14:00:00+03:00"
               String hourStr  = startStr.substring(11, 13); // "14:00"
+              String minStr   = startStr.substring(14, 16); // "14:00"
 
               Serial.printf("%s -> %.3f EUR/kWh\n", hourStr.c_str(), value);
               if (hourStr.toInt() < today_start_index+12) {
@@ -241,35 +312,38 @@ void drawCurrentDay() {
                   color = TFT_ORANGE;
                 }
                 
-                tft.fillRect(h_index+30, constrain(100-h,0,99), 10, constrain(h,0,100), color);
-                tft.drawLine(h_index+30, 100, h_index+30, 101, color);
-                if (index % 2 == 0) {
+                tft.fillRect(h_index+graphOffset, constrain(100-h,0,99), 2, constrain(h,0,100), color);
+                
+                if (minStr == "00") {
                   tft.setTextSize(1);
                   tft.setTextDatum(TL_DATUM); 
-                  tft.drawString(hourStr, h_index+30, 106);
+                  if(hourStr.toInt() % 2 == 0) {
+                    tft.drawString(hourStr, h_index+graphOffset+1, 106);
+                  }
+                  tft.drawLine(h_index+graphOffset, 100, h_index+graphOffset, 102, color);
                 }
-                Serial.printf("%i -> %i **\n", h_index+30, h);
-                if (hourStr.toInt() == 0) {
-                  tft.fillRect(h_index+30, 1, 2, 100, TFT_BLUE);
+                Serial.printf("%i -> %i **\n", h_index+graphOffset, h);
+                if (hourStr.toInt() == 0 && minStr == "00") {
+                  tft.fillRect(h_index+graphOffset, 1, 2, 100, TFT_BLUE);
                   
                 }
                 
-                h_index = h_index+10;
+                h_index = h_index+3;
               }
               index++;
             }
           }
-          tft.drawString("Tomorrow", ((24-today_start_index)*10)+40, 10);
+          tft.drawString("Tomorrow", ((24-today_start_index)*3*4)+graphOffset+10, 10);
         }
 
-        TFT_dashline(28,75, 315, 2, 6);
-        TFT_dashline(28,50, 315, 2, 6);
-        TFT_dashline(28,25, 315, 2, 6);
+        TFT_dashline(graphOffset-2,75, 315, 2, 6);
+        TFT_dashline(graphOffset-2,50, 315, 2, 6);
+        TFT_dashline(graphOffset-2,25, 315, 2, 6);
         tft.setTextSize(1);
         tft.setTextDatum(TL_DATUM); 
-        tft.drawString("5", 15, 72);
-        tft.drawString("10", 8, 47);
-        tft.drawString("15", 8, 22);
+        tft.drawString("5", graphOffset-8, 72);
+        tft.drawString("10", graphOffset-13, 47);
+        tft.drawString("15", graphOffset-13, 22);
 
       } else {
         Serial.print("JSON parse error: ");
@@ -432,16 +506,27 @@ void displayElectricity() {
     delay(1000);
   }
 
-  if (currentHour!=timeinfo.tm_hour) {
+  int event = touchHelper.checkEvent();
+  if (event == 1) {
+    Serial.println("Tap detected");
+  } else if (event == 2) {
+    Serial.println("Long press detected");
+    displaymode = "SETTINGS";
+  } else if (event == 3) {
+    Serial.println("Double Click");
+  }
+
+  if (currentHour!=timeinfo.tm_hour || displaymode_change) {
     currentHour=timeinfo.tm_hour;
     drawCurrentDay();
     setBrightnesByClock();
+    if(displaymode_change) { displaymode_change = 0; }
   }
   if (touchscreen.tirqTouched() && touchscreen.touched()) {
     TS_Point p = touchscreen.getPoint();
 
     setBrightness(255);
-    setBrightnessNormal.setTimer(6000);
+    setBrightnessNormal.setTimer(15000);
 
     
     int tx = map(p.x, 200, 3700, 1, SCREEN_WIDTH);
@@ -478,7 +563,7 @@ void displayElectricity() {
   //tft.fillRect(1, 120, 140, 22, TFT_BLACK);
 
   // Print time
-  tft.setTextSize(2);
+  tft.setTextSize(3);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextPadding(tft.textWidth("88:88:88"));
   //tft.setCursor(2, 120);
@@ -487,11 +572,123 @@ void displayElectricity() {
   if (el_arc.doTask()) { printConsumption(); }
 }
 
-void loop() {
-  
+int checkOK(String info_text) {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.drawString(info_text,20,40);
+  drawButton(btnYes);
+  drawButton(btnNo);
+  while (true) {
+    int event = touchHelper.checkEvent();
+    if (event ==1) {
+      if (isTouchInButton(touchHelper.getTouchCoordinateX(), touchHelper.getTouchCoordinateY(), btnYes)) {
+        tft.fillScreen(TFT_BLACK);
+        return 1;
+      } else if (isTouchInButton(touchHelper.getTouchCoordinateX(), touchHelper.getTouchCoordinateY(), btnNo)) {
+        tft.fillScreen(TFT_BLACK);
+        return 0;
+      }
+    }
+  }
+}
 
+void displaySettings() {
+  int continue_loop = 1;
+  while (true) {
+    tft.fillScreen(TFT_BLACK);
+    String ipStr = WiFi.localIP().toString();
+    
+    tft.setTextSize(2);
+    tft.drawString("Please configure", 5, 10);
+    tft.drawString("using web browser.", 5, 25);
+    tft.setTextSize(3);
+    tft.drawString("Use address:", 10, 55);
+    tft.setTextSize(2);
+    tft.drawString("http://"+ipStr, 10, 85);
+
+    tft.drawString("Long press display", 5, 120);
+    tft.drawString("after settings configured", 5, 140);
+    tft.drawString("and saved", 5, 160);
+
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    HAConfig_begin(server,ipStr);
+
+    drawButton(btnResetWiFi);
+
+    while (true) {
+      HAConfig_handleLoop(server, touchHelper);
+      int event = touchHelper.checkEvent();
+      if (event == 2) {  // long press detected
+        Serial.println("Long press detected! Continuing...");
+        continue_loop = 0;
+        break; // exit loop
+      }
+      if (event ==1) {
+        if (isTouchInButton(touchHelper.getTouchCoordinateX(), touchHelper.getTouchCoordinateY(), btnResetWiFi)) {
+        
+        Serial.println("Reset WiFi pressed");
+        if (checkOK("Reset WiFi?")) {
+          continue_loop = 1;
+          wifiManager.resetSettings();
+          ESP.restart();
+        } else {
+          continue_loop == 1;
+          break;
+        }
+        }
+      }
+      delay(10); // small delay to avoid busy loop
+    }
+
+    if (continue_loop == 1) { continue; }
+
+    tft.fillScreen(TFT_BLACK);
+    
+    loadSettings();
+    Serial.printf("g_ha_server: %s\n", g_ha_server);
+    Serial.printf("g_entity_id: %s\n", g_entity_id);
+    Serial.printf("g_token: %s\n", g_token);
+
+    tft.setTextSize(2);
+    tft.drawString("SAVED", 10, 10);
+    tft.setTextSize(1);
+    tft.drawString("g_ha_server: "+g_ha_server, 10, 40);
+    tft.drawString("g_entity_id: "+g_entity_id, 10, 60);
+    tft.drawString("g_token: "+g_token, 10, 80);
+    tft.drawString("g_el_entity_id: "+g_el_entity_id, 10, 100);
+    tft.drawString("g_el_ma_entity_id: "+g_el_ma_entity_id, 10, 120);
+    tft.drawString("g_message_entity_id: "+g_message_entity_id, 10, 140);
+    tft.setTextSize(2);
+    tft.drawString("WAIT 5 sec.", 10, 190);
+
+
+    g_ha_server.toCharArray(ha_server, sizeof(ha_server));
+    g_entity_id.toCharArray(entity_id, sizeof(entity_id));
+    token = g_token;
+    el_entity_id      = g_el_entity_id;
+    el_ma_entity_id   = g_el_ma_entity_id;
+    message_entity_id = g_message_entity_id;
+
+    delay(5000);
+
+    tft.fillScreen(TFT_BLACK);
+
+    displaymode = "ELECTRICITY";
+    displaymode_change = 1;
+    break;
+  }
+}
+
+void loop() {
+ 
   if (displaymode == "ELECTRICITY") {
     displayElectricity();
+  }
+
+  if (displaymode == "SETTINGS") {
+    displaySettings();
   }
 
 
