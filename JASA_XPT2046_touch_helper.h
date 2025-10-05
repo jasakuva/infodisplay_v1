@@ -21,6 +21,10 @@ public:
 
     // 0 = none, 1 = tap, 2 = long press, 3 = double click
     int checkEvent();
+
+    int getTouchCoordinateX();
+
+    int getTouchCoordinateY();
 };
 
 #endif

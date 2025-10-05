@@ -1,6 +1,12 @@
 #include "JASA_XPT2046_touch_helper.h"
 #include <Arduino.h>
 
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 240
+
+int tx;
+int ty;
+
 JASA_XPT2046_touch_helper::JASA_XPT2046_touch_helper(XPT2046_Touchscreen &touchscreen)
     : ts(touchscreen) {}
 
@@ -12,9 +18,19 @@ void JASA_XPT2046_touch_helper::setDoubleClickTime(unsigned long ms) {
     doubleClickTime = ms;
 }
 
+int JASA_XPT2046_touch_helper::getTouchCoordinateX() {
+    return tx;
+}
+
+int JASA_XPT2046_touch_helper::getTouchCoordinateY() {
+    return ty;
+}
+
 int JASA_XPT2046_touch_helper::checkEvent() {
     bool touchingNow = ts.tirqTouched() && ts.touched();
-
+    TS_Point p = ts.getPoint();
+    tx = map(p.x, 200, 3700, 1, SCREEN_WIDTH);
+    ty = map(p.y, 240, 3800, 1, SCREEN_HEIGHT);
     if (touchingNow) {
         if (!isTouching) {
             // New press
