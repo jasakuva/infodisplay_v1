@@ -70,6 +70,7 @@ WiFiManager wifiManager;
 WebServer server(80);
 
 JASA_Scheduler el_arc(15000);
+JASA_Scheduler el_msg(15000);
 JASA_Scheduler setBrightnessNormal(0,JASA_Scheduler::TIMER);
 
 int currentHour;
@@ -499,6 +500,40 @@ void setBrightness(int brightness) {
   Serial.printf("Brightness set: %i\n", brightness);
 }
 
+void printMessageEl() {
+  String entity_message = getEntityStatus("sensor.power_1h");
+
+  if (entity_message != "unavailable" && entity_message.length() > 0) {
+    StaticJsonDocument<512> doc; // adjust if JSON is large
+
+    DeserializationError error = deserializeJson(doc, entity_message);
+    if (error) {
+      Serial.print("JSON parse error: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    JsonArray texts = doc["texts"];
+    if (texts.isNull()) {
+      Serial.println("No 'texts' array found in JSON");
+      return;
+    }
+
+    //{"texts":[{"x":10,"y":20,"size":2,"text":"Hello"}]}
+    for (JsonObject item : texts) {
+      int x = item["x"];
+      int y = item["y"];
+      int size = item["size"];
+      const char* text = item["text"];
+
+      Serial.printf("Draw text '%s' at (%d, %d) with size %d\n", text, x, y, size);
+      // drawText(x, y, size, text);
+    }
+  } else {
+    Serial.println("Entity unavailable or empty.");
+  }
+}
+
 void displayElectricity() {
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)){
@@ -570,6 +605,9 @@ void displayElectricity() {
   tft.drawString(timeStr,2,120);
   tft.setTextPadding(0);
   if (el_arc.doTask()) { printConsumption(); }
+
+  if (el_msg.doTask()) { printMessageEl(); }
+
 }
 
 int checkOK(String info_text) {
