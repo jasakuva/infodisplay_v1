@@ -18,6 +18,8 @@ using FS = fs::FS;   // alias old FS to new fs::FS
 
 // ===== TFT Setup =====
 TFT_eSPI tft = TFT_eSPI();
+TFT_eSprite sprite = TFT_eSprite(&tft);
+TFT_eSprite sprite_price = TFT_eSprite(&tft);
 
 // Touchscreen pins
 #define XPT2046_IRQ 36   // T_IRQ
@@ -146,16 +148,24 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
   //drawButton(btnOpen);
   //drawButton(btnClose);
+  //sprite.setColorDepth(8);
+  sprite_price.createSprite(316, 115);
+  sprite.createSprite(310, 140);
+
+  sprite.fillSprite(TFT_BLACK);
 
   Serial.println("Start wifimanager");
-  tft.setTextSize(1);
-  tft.drawString("If this display stays owe 5 sec.,", 10, 10);
-  tft.drawString("configure wifi settings.", 10, 25);
-  tft.drawString("Find access point:", 10, 40);
-  tft.drawString("access point: jasainfo", 10, 55);
-  tft.drawString("password: 12345678", 10, 70);
-  tft.drawString("and usding same phone, go to:", 10, 85);
-  tft.drawString("192.168.4.1", 10, 100);
+  sprite.setTextSize(1);
+  sprite.drawString("If this display stays owe 5 sec.,", 10, 10);
+  sprite.drawString("configure wifi settings.", 10, 25);
+  sprite.drawString("Find access point:", 10, 40);
+  sprite.drawString("access point: jasainfo", 10, 55);
+  sprite.drawString("password: 12345678", 10, 70);
+  sprite.drawString("and usding same phone, go to:", 10, 85);
+  sprite.drawString("192.168.4.1", 10, 100);
+  sprite.pushSprite(0,0);
+  sprite.deleteSprite();
+  delay(2000);
   wifiManager.autoConnect("jasainfo", "12345678");
   Serial.println("END wifimanager");
 
@@ -172,13 +182,16 @@ void setup() {
   Serial.printf("g_entity_id: %s\n", g_entity_id);
   Serial.printf("g_token: %s\n", g_token);
 
-  tft.fillScreen(TFT_BLACK);
+  sprite.fillScreen(TFT_BLACK);
   
   //tft.drawString("g_ha_server: "+g_ha_server, 10, 50);
   //tft.drawString("g_entity_id: "+g_entity_id, 10, 65);
   //tft.drawString("g_token: "+g_token, 10, 80);
-  tft.setTextSize(2);
-  tft.drawString("WELCOME !", 10, 100);
+  sprite.setTextSize(2);
+  sprite.drawString("WELCOME !", 10, 100);
+
+  sprite.pushSprite(0,0);
+
 
   g_ha_server.toCharArray(ha_server, sizeof(ha_server));
   g_entity_id.toCharArray(entity_id, sizeof(entity_id));
@@ -189,7 +202,8 @@ void setup() {
 
   delay(5000);
 
-  tft.fillScreen(TFT_BLACK);
+  sprite.fillScreen(TFT_BLACK);
+  sprite.deleteSprite();
 
 }
 
@@ -204,6 +218,14 @@ void TFT_dashline(int x0,int y0, int x1, int dashLength, int gapLength) {
             int xEnd = x + dashLength;
             if (xEnd > x1) xEnd = x1;
             tft.drawLine(x, y0, xEnd, y0, TFT_GREEN);
+  }
+}
+
+void TFT_dashline_sprite(int x0,int y0, int x1, int dashLength, int gapLength) {
+  for (int x = x0; x < x1; x += dashLength + gapLength) {
+            int xEnd = x + dashLength;
+            if (xEnd > x1) xEnd = x1;
+            sprite_price.drawLine(x, y0, xEnd, y0, TFT_GREEN);
   }
 }
 
@@ -230,13 +252,15 @@ void drawCurrentDay() {
       DeserializationError error = deserializeJson(doc, payload);
 
       if (!error) {
+        
+        
         JsonArray rawToday = doc["attributes"]["raw_today"].as<JsonArray>();
         if (doc["attributes"].containsKey("raw_tomorrow")) {
           JsonArray rawTomorrow = doc["attributes"]["raw_tomorrow"].as<JsonArray>();
         }
         bool tomorrow_valid = doc["attributes"]["tomorrow_valid"];
         
-        tft.fillRect(1, 1, 320, 119, TFT_BLACK);
+        sprite_price.fillRect(1, 1, 314, 114, TFT_BLACK);
         Serial.println("Today's hourly prices:");
 
         int today_start_index = 0;
@@ -267,19 +291,19 @@ void drawCurrentDay() {
               color = TFT_ORANGE;
             }
             
-            tft.fillRect(h_index+graphOffset, constrain(100-h,0,99), 2, constrain(h,0,100), color);
+            sprite_price.fillRect(h_index+graphOffset, constrain(100-h,0,99), 2, constrain(h,0,100), color);
             
             if (minStr == "00") {
-              tft.setTextSize(1);
-              tft.setTextDatum(TL_DATUM); 
+              sprite_price.setTextSize(1);
+              sprite_price.setTextDatum(TL_DATUM); 
               if(hourStr.toInt() % 2 == 0) {
-                    tft.drawString(hourStr, h_index+graphOffset+1, 106);
+                    sprite_price.drawString(hourStr, h_index+graphOffset+1, 106);
               }
-              tft.drawLine(h_index+graphOffset, 100, h_index+graphOffset, 102, color);
+              sprite_price.drawLine(h_index+graphOffset, 100, h_index+graphOffset, 102, color);
             }
             Serial.printf("%i -> %i **\n", h_index+graphOffset, h);
             if (hourStr.toInt()==currentHour && minStr == "00") {
-              tft.drawLine(h_index+graphOffset+5, 100, h_index+graphOffset+5, 10, TFT_GREEN);
+              sprite_price.drawLine(h_index+graphOffset+5, 100, h_index+graphOffset+5, 10, TFT_GREEN);
             }
             h_index = h_index+3;
           }
@@ -313,19 +337,19 @@ void drawCurrentDay() {
                   color = TFT_ORANGE;
                 }
                 
-                tft.fillRect(h_index+graphOffset, constrain(100-h,0,99), 2, constrain(h,0,100), color);
+                sprite_price.fillRect(h_index+graphOffset, constrain(100-h,0,99), 2, constrain(h,0,100), color);
                 
                 if (minStr == "00") {
-                  tft.setTextSize(1);
-                  tft.setTextDatum(TL_DATUM); 
+                  sprite_price.setTextSize(1);
+                  sprite_price.setTextDatum(TL_DATUM); 
                   if(hourStr.toInt() % 2 == 0) {
-                    tft.drawString(hourStr, h_index+graphOffset+1, 106);
+                    sprite_price.drawString(hourStr, h_index+graphOffset+1, 106);
                   }
-                  tft.drawLine(h_index+graphOffset, 100, h_index+graphOffset, 102, color);
+                  sprite_price.drawLine(h_index+graphOffset, 100, h_index+graphOffset, 102, color);
                 }
                 Serial.printf("%i -> %i **\n", h_index+graphOffset, h);
                 if (hourStr.toInt() == 0 && minStr == "00") {
-                  tft.fillRect(h_index+graphOffset, 1, 2, 100, TFT_BLUE);
+                  sprite_price.fillRect(h_index+graphOffset, 1, 2, 100, TFT_BLUE);
                   
                 }
                 
@@ -334,17 +358,17 @@ void drawCurrentDay() {
               index++;
             }
           }
-          tft.drawString("Tomorrow", ((24-today_start_index)*3*4)+graphOffset+10, 10);
+          sprite_price.drawString("Tomorrow", ((24-today_start_index)*3*4)+graphOffset+10, 10);
         }
 
-        TFT_dashline(graphOffset-2,75, 315, 2, 6);
-        TFT_dashline(graphOffset-2,50, 315, 2, 6);
-        TFT_dashline(graphOffset-2,25, 315, 2, 6);
-        tft.setTextSize(1);
-        tft.setTextDatum(TL_DATUM); 
-        tft.drawString("5", graphOffset-8, 72);
-        tft.drawString("10", graphOffset-13, 47);
-        tft.drawString("15", graphOffset-13, 22);
+        TFT_dashline_sprite(graphOffset-2,75, 315, 2, 6);
+        TFT_dashline_sprite(graphOffset-2,50, 315, 2, 6);
+        TFT_dashline_sprite(graphOffset-2,25, 315, 2, 6);
+        sprite_price.setTextSize(1);
+        sprite_price.setTextDatum(TL_DATUM); 
+        sprite_price.drawString("5", graphOffset-8, 72);
+        sprite_price.drawString("10", graphOffset-13, 47);
+        sprite_price.drawString("15", graphOffset-13, 22);
 
       } else {
         Serial.print("JSON parse error: ");
@@ -355,6 +379,8 @@ void drawCurrentDay() {
     }
 
     http.end();
+    sprite_price.pushSprite(0, 0);
+    //sprite.deleteSprite();
   }
 }
 
@@ -474,6 +500,27 @@ void drawArc(int x, int y, int r_in, int r_out, int start_angle, int end_angle, 
   }
 }
 
+void drawArc_sprite(int x, int y, int r_in, int r_out, int start_angle, int end_angle, uint16_t color) {
+  for (int angle = start_angle; angle < end_angle; angle++) {
+    float rad1 = (angle + 90) * DEG_TO_RAD;
+    float rad2 = (angle + 91) * DEG_TO_RAD;
+
+    int x_in1 = x + cos(rad1) * r_in;
+    int y_in1 = y + sin(rad1) * r_in;
+    int x_out1 = x + cos(rad1) * r_out;
+    int y_out1 = y + sin(rad1) * r_out;
+
+    int x_in2 = x + cos(rad2) * r_in;
+    int y_in2 = y + sin(rad2) * r_in;
+    int x_out2 = x + cos(rad2) * r_out;
+    int y_out2 = y + sin(rad2) * r_out;
+
+    // Fill between two "slices"
+    tft.fillTriangle(x_in1, y_in1, x_out1, y_out1, x_out2, y_out2, color);
+    tft.fillTriangle(x_in1, y_in1, x_in2, y_in2, x_out2, y_out2, color);
+  }
+}
+
 void setBrightnesByClock() {
 
 int brightness;
@@ -511,6 +558,18 @@ void printMessage(String entity_message) {
       return;
     }
 
+    JsonObject sp = doc["sprite"];
+    int x = sp["x"];
+    int y = sp["y"];
+    int width = sp["width"];
+    int height = sp["height"];
+    const char* type = sp["type"];
+
+    
+    Serial.printf("create sprite width %i, height %i \n", width, height);
+    sprite.createSprite(width, height);
+    sprite.fillSprite(TFT_BLACK);
+
     JsonArray texts = doc["texts"];
     if (texts.isNull()) {
       Serial.println("No 'texts' array found in JSON");
@@ -525,10 +584,12 @@ void printMessage(String entity_message) {
       const char* text = item["text"];
 
       Serial.printf("Draw text '%s' at (%d, %d) with size %d\n", text, x, y, size);
-      tft.setTextSize(size);
-      tft.drawString(text,x,y);
+      sprite.setTextSize(size);
+      sprite.drawString(text,x,y);
       
     }
+    sprite.pushSprite(x, y);
+    sprite.deleteSprite();
   } else {
     Serial.println("Entity unavailable or empty.");
   }
@@ -738,6 +799,7 @@ void loop() {
  
   if (displaymode == "ELECTRICITY") {
     displayElectricity();
+    //sprite.pushSprite(0,0);
   }
 
   if (displaymode == "SETTINGS") {
